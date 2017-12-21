@@ -23,7 +23,7 @@ import pickle
 parser = argparse.ArgumentParser('')
 parser.add_argument('--model', type=str, default='dcgan')
 parser.add_argument('--gpus', type=str, default='0')
-parset.add_argument('--iters', type=int, default=100000)
+parser.add_argument('--iters', type=int, default=100000)
 args = parser.parse_args()
 MODE = args.model
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
@@ -169,17 +169,17 @@ elif MODE == 'wgan-gp':
 
 elif MODE == 'dcgan':
     gen_cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-        disc_fake,
-        tf.ones_like(disc_fake)
+        logits=disc_fake,
+        labels=tf.ones_like(disc_fake)
     ))
 
     disc_cost =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-        disc_fake,
-        tf.zeros_like(disc_fake)
+        logits=disc_fake,
+        labels=tf.zeros_like(disc_fake)
     ))
     disc_cost += tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-        disc_real,
-        tf.ones_like(disc_real)
+        logits=disc_real,
+        labels=tf.ones_like(disc_real)
     ))
     disc_cost /= 2.
 
@@ -241,11 +241,12 @@ for iteration in xrange(ITERS):
 
 
 bs = 64
-num_batches = 900
+num_batches = 5
 
 dat = np.zeros((bs * num_batches, 784))
 for i in range(num_batches):
+    print (i)
     gen_pics = Generator(bs)
     dat[bs * i:bs * (i + 1)] = session.run(gen_pics)
 
-pickle.dump(dat, open('{}_data/class_all.pickle', 'wb'))
+pickle.dump(dat, open('{}_data/class_all.pickle'.format(args.model), 'wb'))
