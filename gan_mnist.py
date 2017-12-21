@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sklearn.datasets
 import tensorflow as tf
-
+import argparse
 import tflib as lib
 import tflib.ops.linear
 import tflib.ops.conv2d
@@ -18,25 +18,32 @@ import tflib.ops.deconv2d
 import tflib.save_images
 import tflib.mnist
 import tflib.plot
+import pickle
 
-MODE = 'wgan-gp' # dcgan, wgan, or wgan-gp
+parser = argparse.ArgumentParser('')
+parser.add_argument('--model', type=str, default='dcgan')
+parser.add_argument('--gpus', type=str, default='0')
+parset.add_argument('--iters', type=int, default=100000)
+args = parser.parse_args()
+MODE = args.model
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
+
+
 DIM = 64 # Model dimensionality
 BATCH_SIZE = 50 # Batch size
 CRITIC_ITERS = 5 # For WGAN and WGAN-GP, number of critic iters per gen iter
 LAMBDA = 10 # Gradient penalty lambda hyperparameter
-ITERS = 200000 # How many generator iterations to train for 
+ITERS = args.iters # How many generator iterations to train for
 OUTPUT_DIM = 784 # Number of pixels in MNIST (28*28)
-
-lib.print_model_settings(locals().copy())
 
 def LeakyReLU(x, alpha=0.2):
     return tf.maximum(alpha*x, x)
 
 def ReLULayer(name, n_in, n_out, inputs):
     output = lib.ops.linear.Linear(
-        name+'.Linear', 
-        n_in, 
-        n_out, 
+        name+'.Linear',
+        n_in,
+        n_out,
         inputs,
         initialization='he'
     )
@@ -44,9 +51,9 @@ def ReLULayer(name, n_in, n_out, inputs):
 
 def LeakyReLULayer(name, n_in, n_out, inputs):
     output = lib.ops.linear.Linear(
-        name+'.Linear', 
-        n_in, 
-        n_out, 
+        name+'.Linear',
+        n_in,
+        n_out,
         inputs,
         initialization='he'
     )
@@ -125,7 +132,7 @@ if MODE == 'wgan':
         clip_bounds = [-.01, .01]
         clip_ops.append(
             tf.assign(
-                var, 
+                var,
                 tf.clip_by_value(var, clip_bounds[0], clip_bounds[1])
             )
         )
@@ -136,7 +143,7 @@ elif MODE == 'wgan-gp':
     disc_cost = tf.reduce_mean(disc_fake) - tf.reduce_mean(disc_real)
 
     alpha = tf.random_uniform(
-        shape=[BATCH_SIZE,1], 
+        shape=[BATCH_SIZE,1],
         minval=0.,
         maxval=1.
     )
@@ -148,13 +155,13 @@ elif MODE == 'wgan-gp':
     disc_cost += LAMBDA*gradient_penalty
 
     gen_train_op = tf.train.AdamOptimizer(
-        learning_rate=1e-4, 
+        learning_rate=1e-4,
         beta1=0.5,
         beta2=0.9
     ).minimize(gen_cost, var_list=gen_params)
     disc_train_op = tf.train.AdamOptimizer(
-        learning_rate=1e-4, 
-        beta1=0.5, 
+        learning_rate=1e-4,
+        beta1=0.5,
         beta2=0.9
     ).minimize(disc_cost, var_list=disc_params)
 
@@ -162,26 +169,26 @@ elif MODE == 'wgan-gp':
 
 elif MODE == 'dcgan':
     gen_cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-        disc_fake, 
+        disc_fake,
         tf.ones_like(disc_fake)
     ))
 
     disc_cost =  tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-        disc_fake, 
+        disc_fake,
         tf.zeros_like(disc_fake)
     ))
     disc_cost += tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(
-        disc_real, 
+        disc_real,
         tf.ones_like(disc_real)
     ))
     disc_cost /= 2.
 
     gen_train_op = tf.train.AdamOptimizer(
-        learning_rate=2e-4, 
+        learning_rate=2e-4,
         beta1=0.5
     ).minimize(gen_cost, var_list=gen_params)
     disc_train_op = tf.train.AdamOptimizer(
-        learning_rate=2e-4, 
+        learning_rate=2e-4,
         beta1=0.5
     ).minimize(disc_cost, var_list=disc_params)
 
@@ -193,7 +200,7 @@ fixed_noise_samples = Generator(128, noise=fixed_noise)
 def generate_image(frame, true_dist):
     samples = session.run(fixed_noise_samples)
     lib.save_images.save_images(
-        samples.reshape((128, 28, 28)), 
+        samples.reshape((128, 28, 28)),
         'samples_{}.png'.format(frame)
     )
 
@@ -205,49 +212,40 @@ def inf_train_gen():
             yield images
 
 # Train loop
-with tf.Session() as session:
 
-    session.run(tf.initialize_all_variables())
+config = tf.ConfigProto()
+config.gpu_options.allow_growth = True
 
-    gen = inf_train_gen()
+session = tf.Session(config=config)
+session.run(tf.initialize_all_variables())
+gen = inf_train_gen()
 
-    for iteration in xrange(ITERS):
-        start_time = time.time()
+for iteration in xrange(ITERS):
+    start_time = time.time()
+    print ("Iteration = {}".format(iteration))
+    if iteration > 0:
+        _ = session.run(gen_train_op)
 
-        if iteration > 0:
-            _ = session.run(gen_train_op)
+    if MODE == 'dcgan':
+        disc_iters = 1
+    else:
+        disc_iters = CRITIC_ITERS
+    for i in xrange(disc_iters):
+        _data = gen.next()
+        _disc_cost, _ = session.run(
+            [disc_cost, disc_train_op],
+            feed_dict={real_data: _data}
+        )
+        if clip_disc_weights is not None:
+            _ = session.run(clip_disc_weights)
 
-        if MODE == 'dcgan':
-            disc_iters = 1
-        else:
-            disc_iters = CRITIC_ITERS
-        for i in xrange(disc_iters):
-            _data = gen.next()
-            _disc_cost, _ = session.run(
-                [disc_cost, disc_train_op],
-                feed_dict={real_data: _data}
-            )
-            if clip_disc_weights is not None:
-                _ = session.run(clip_disc_weights)
 
-        lib.plot.plot('train disc cost', _disc_cost)
-        lib.plot.plot('time', time.time() - start_time)
+bs = 64
+num_batches = 900
 
-        # Calculate dev loss and generate samples every 100 iters
-        if iteration % 100 == 99:
-            dev_disc_costs = []
-            for images,_ in dev_gen():
-                _dev_disc_cost = session.run(
-                    disc_cost, 
-                    feed_dict={real_data: images}
-                )
-                dev_disc_costs.append(_dev_disc_cost)
-            lib.plot.plot('dev disc cost', np.mean(dev_disc_costs))
+dat = np.zeros((bs * num_batches, 784))
+for i in range(num_batches):
+    gen_pics = Generator(bs)
+    dat[bs * i:bs * (i + 1)] = session.run(gen_pics)
 
-            generate_image(iteration, _data)
-
-        # Write logs every 100 iters
-        if (iteration < 5) or (iteration % 100 == 99):
-            lib.plot.flush()
-
-        lib.plot.tick()
+pickle.dump(dat, open('{}_data/class_all.pickle', 'wb'))
